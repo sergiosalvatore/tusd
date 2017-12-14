@@ -2,13 +2,14 @@ package cli
 
 import (
 	"os"
+	"strings"
 
 	"github.com/tus/tusd"
 	"github.com/tus/tusd/filestore"
+	"github.com/tus/tusd/gcsstore"
 	"github.com/tus/tusd/limitedstore"
 	"github.com/tus/tusd/memorylocker"
 	"github.com/tus/tusd/s3store"
-	"github.com/tus/tusd/gcsstore"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -37,12 +38,25 @@ func CreateComposer() {
 		// AWS_REGION environment variables.
 		s3Config = s3Config.WithCredentials(credentials.NewEnvCredentials())
 		store := s3store.New(Flags.S3Bucket, s3.New(session.New(), s3Config))
+
+		// if the S3KeyTemplate was supplied, make sure it it's valid before
+		// setting it.
+		if len(Flags.S3KeyTemplate) > 0 {
+			if strings.Contains(Flags.S3KeyTemplate, s3store.IDtoken) {
+				// it has the ID token in it, so we're good...
+				store.KeyTemplate = Flags.S3KeyTemplate
+				stdout.Printf("Using '%s' as S3 key template.\n", Flags.S3KeyTemplate)
+			} else {
+				// the ID token isn't found in the template, so we should bail out.
+				stdout.Fatalf("S3 key template '%s' does not contain the ID token '%s' at least once.", Flags.S3KeyTemplate, s3store.IDtoken)
+			}
+		}
 		store.UseIn(Composer)
 
 		locker := memorylocker.New()
 		locker.UseIn(Composer)
 	} else if Flags.GCSBucket != "" {
-		// Derivce credentials from service account file path passed in
+		// Derive credentials from service account file path passed in
 		// GCS_SERVICE_ACCOUNT_FILE environment variable.
 		gcsSAF := os.Getenv("GCS_SERVICE_ACCOUNT_FILE")
 		if gcsSAF == "" {

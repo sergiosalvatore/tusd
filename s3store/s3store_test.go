@@ -71,6 +71,56 @@ func TestNewUpload(t *testing.T) {
 	assert.Equal("uploadId+multipartId", id)
 }
 
+func TestNewUploadWithTemplate(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	assert := assert.New(t)
+
+	s3obj := NewMockS3API(mockCtrl)
+	store := New("bucket", s3obj)
+	store.KeyTemplate = "/prefix/{{id}}/{{id}}"
+
+	expectedKey := "/prefix/uploadId/uploadId"
+
+	assert.Equal("bucket", store.Bucket)
+	assert.Equal(s3obj, store.Service)
+
+	s1 := "hello"
+	s2 := "men?"
+
+	gomock.InOrder(
+		s3obj.EXPECT().CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+			Bucket: aws.String("bucket"),
+			Key:    aws.String(expectedKey),
+			Metadata: map[string]*string{
+				"foo": &s1,
+				"bar": &s2,
+			},
+		}).Return(&s3.CreateMultipartUploadOutput{
+			UploadId: aws.String("multipartId"),
+		}, nil),
+		s3obj.EXPECT().PutObject(&s3.PutObjectInput{
+			Bucket:        aws.String("bucket"),
+			Key:           aws.String(expectedKey + ".info"),
+			Body:          bytes.NewReader([]byte(`{"ID":"uploadId+multipartId","Size":500,"Offset":0,"MetaData":{"bar":"menü","foo":"hello"},"IsPartial":false,"IsFinal":false,"PartialUploads":null}`)),
+			ContentLength: aws.Int64(int64(148)),
+		}),
+	)
+
+	info := tusd.FileInfo{
+		ID:   "uploadId",
+		Size: 500,
+		MetaData: map[string]string{
+			"foo": "hello",
+			"bar": "menü",
+		},
+	}
+
+	id, err := store.NewUpload(info)
+	assert.Nil(err)
+	assert.Equal("uploadId+multipartId", id)
+}
+
 func TestNewUploadLargerMaxObjectSize(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -694,4 +744,17 @@ func TestConcatUploads(t *testing.T) {
 		"ccc+CCC",
 	})
 	assert.Nil(err)
+}
+
+func TestConstructKey(t *testing.T) {
+	store := S3Store{
+		KeyTemplate: "/prefix/{{id}}/{{id}}",
+	}
+
+	uploadID := "abc123"
+
+	resultingKey := store.constructKey(uploadID)
+	expected := fmt.Sprintf("/prefix/%s/%s", uploadID, uploadID)
+
+	assert.Equal(t, expected, resultingKey)
 }
